@@ -2,8 +2,9 @@ import { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, onAuthStateChanged, GithubAuthProvider, GoogleAuthProvider, signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import type { User } from 'firebase/auth';
-import { getFirestore, doc, collection, onSnapshot, updateDoc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { Github, Loader2, LogOut, Check, X, Key } from 'lucide-react';
+import { getFirestore, doc, collection, onSnapshot, updateDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import type { Timestamp } from 'firebase/firestore';
+import { Github, Loader2, LogOut, Check, X, Key, MoreHorizontal, Trash2, ShieldOff, XCircle, Shield, Fingerprint, Calendar, Database, Pencil, Save, Link2 } from 'lucide-react';
 
 // Initialize Firebase
 const firebaseConfig = {
@@ -20,6 +21,18 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Master admin email — the account that gets auto-provisioned as master_admin
+const MASTER_EMAIL = import.meta.env.VITE_MASTER_ADMIN_EMAIL || 'santiago.fernandez@nakamateam.com';
+
+const GoogleIcon = ({ className }: { className?: string }) => (
+  <svg viewBox="0 0 24 24" className={className} fill="none" xmlns="http://www.w3.org/2000/svg">
+    <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4" />
+    <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853" />
+    <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05" />
+    <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335" />
+  </svg>
+);
+
 function App() {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<any>(null);
@@ -29,6 +42,11 @@ function App() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [users, setUsers] = useState<any[]>([]);
+  const [menuOpenId, setMenuOpenId] = useState<string | null>(null);
+  const [selectedUser, setSelectedUser] = useState<any | null>(null);
+  const [editMode, setEditMode] = useState(false);
+  const [editData, setEditData] = useState<Record<string, string>>({});
+  const [savingEdit, setSavingEdit] = useState(false);
 
   useEffect(() => {
     if (profile?.role === 'master_admin') {
@@ -48,38 +66,71 @@ function App() {
   }, [profile?.role]);
 
   useEffect(() => {
+    let unsubscribeProfile: (() => void) | null = null;
+
     const unsubscribe = onAuthStateChanged(auth, async (currUser) => {
+      // Clean up any previous profile listener before setting up a new one
+      if (unsubscribeProfile) {
+        unsubscribeProfile();
+        unsubscribeProfile = null;
+      }
+
       setUser(currUser);
       if (currUser) {
         setLoadingText('Fetching Master Profile...');
-        // Fetch profile
+        console.log('[AdminForge] Auth detected, UID:', currUser.uid, 'Email:', currUser.email);
         const docRef = doc(db, 'users', currUser.uid);
 
-        // Listen to the document instead of a one-time fetch to solve the race condition
-        // where the Auth triggers before the Firestore document is fully written by the login handler.
-        const unsubscribeProfile = onSnapshot(docRef, async (docSnap) => {
+        unsubscribeProfile = onSnapshot(docRef, async (docSnap) => {
           if (docSnap.exists()) {
             const data = docSnap.data();
+            console.log('[AdminForge] Profile loaded:', { role: data.role, status: data.status });
             setProfile(data);
+            setLoading(false);
           } else {
-            // Profile might not be created yet if they just registered.
-            // We'll rely on the snapshot firing again when it is created.
+            // No profile document for this UID — auto-provision if master email
+            if (currUser.email === MASTER_EMAIL) {
+              console.log('[AdminForge] Master email detected with no profile. Auto-creating master_admin document...');
+              try {
+                await setDoc(docRef, {
+                  uid: currUser.uid,
+                  email: currUser.email,
+                  name: 'Master Admin',
+                  role: 'master_admin',
+                  status: 'approved',
+                  authProvider: 'password',
+                  createdAt: serverTimestamp(),
+                  lastLoginAt: serverTimestamp()
+                });
+                console.log('[AdminForge] master_admin document created. onSnapshot will fire again.');
+                // Don't set loading=false here — onSnapshot will fire again with the new doc
+              } catch (writeErr: any) {
+                console.error('[AdminForge] Failed to auto-create master profile:', writeErr);
+                setError('Failed to create master profile: ' + writeErr.message);
+                setLoading(false);
+              }
+            } else {
+              console.warn('[AdminForge] No profile document found for UID:', currUser.uid);
+              setProfile(null);
+              setLoading(false);
+            }
           }
-          setLoading(false);
         }, (err) => {
-          console.error("Firestore Profile Listener Error:", err);
-          setError("Profile load failed: " + err.message);
+          console.error('[AdminForge] Firestore Profile Listener Error:', err.code, err.message);
+          setError('Profile load failed: ' + err.message);
           setProfile(null);
           setLoading(false);
         });
-
-        return () => unsubscribeProfile();
       } else {
         setProfile(null);
         setLoading(false);
       }
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribe();
+      if (unsubscribeProfile) unsubscribeProfile();
+    };
   }, []);
 
   const handleEmailLogin = async (e: React.FormEvent) => {
@@ -159,11 +210,71 @@ function App() {
     }
   };
 
-  const handleUpdateUserRole = async (uid: string, newRole: 'admin' | 'user') => {
+  const handleUpdateUserRole = async (uid: string, newRole: 'admin' | 'user' | 'free') => {
     try {
       await updateDoc(doc(db, 'users', uid), { role: newRole });
     } catch (err) {
       console.error("Failed to update user role", err);
+    }
+  };
+
+  const handleDeleteUser = async (uid: string) => {
+    const confirmed = window.confirm(
+      'Are you sure you want to permanently delete this user and ALL their data? This action cannot be undone.'
+    );
+    if (!confirmed) return;
+    try {
+      await deleteDoc(doc(db, 'users', uid));
+      setMenuOpenId(null);
+      setSelectedUser(null);
+    } catch (err) {
+      console.error('Failed to delete user', err);
+      alert('Failed to delete user. Check console for details.');
+    }
+  };
+
+  const formatTimestamp = (ts: Timestamp | any) => {
+    if (!ts) return '—';
+    const date = ts.toDate ? ts.toDate() : new Date(ts);
+    return date.toLocaleString();
+  };
+
+  const startEditing = (u: any) => {
+    setEditMode(true);
+    setEditData({
+      name: u.name || '',
+      email: u.email || '',
+      company: u.company || '',
+      role: u.role || 'user',
+      status: u.status || 'pending',
+    });
+  };
+
+  const cancelEditing = () => {
+    setEditMode(false);
+    setEditData({});
+  };
+
+  const handleSaveEdit = async () => {
+    if (!selectedUser) return;
+    setSavingEdit(true);
+    try {
+      const updates: Record<string, any> = {};
+      if (editData.name !== (selectedUser.name || '')) updates.name = editData.name;
+      if (editData.email !== (selectedUser.email || '')) updates.email = editData.email;
+      if (editData.company !== (selectedUser.company || '')) updates.company = editData.company;
+      if (editData.role !== (selectedUser.role || 'user')) updates.role = editData.role;
+      if (editData.status !== (selectedUser.status || 'pending')) updates.status = editData.status;
+      if (Object.keys(updates).length > 0) {
+        await updateDoc(doc(db, 'users', selectedUser.id), updates);
+      }
+      setEditMode(false);
+      setEditData({});
+    } catch (err) {
+      console.error('Failed to save user edits', err);
+      alert('Failed to save changes. Check console for details.');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -246,7 +357,7 @@ function App() {
   }
 
   // Access Guard
-  if (profile?.role !== 'master_admin') {
+  if (!profile || profile?.role !== 'master_admin') {
     return (
       <div className="min-h-screen bg-zinc-950 flex flex-col items-center justify-center p-4">
         <div className="w-full max-w-md bg-zinc-900 border border-red-500/30 rounded-2xl p-8 shadow-2xl flex flex-col items-center">
@@ -255,7 +366,8 @@ function App() {
           </div>
           <h2 className="text-xl font-bold text-white mb-2">Access Denied</h2>
           <p className="text-zinc-400 text-center text-sm mb-8">
-            This portal is restricted to Master Administrators. Your current role is <strong>{profile?.role || 'user'}</strong>.
+            This portal is restricted to Master Administrators.{' '}
+            {profile ? <>Your current role is <strong>{profile.role || 'unknown'}</strong>.</> : <>No profile found for UID: <code className="text-xs text-zinc-500">{user?.uid}</code></>}
           </p>
           <button
             onClick={handleLogout}
@@ -309,11 +421,16 @@ function App() {
                 <th className="px-6 py-3 font-medium">Role</th>
                 <th className="px-6 py-3 font-medium">Status</th>
                 <th className="px-6 py-3 font-medium text-right">Actions</th>
+                <th className="w-10"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-800 text-sm">
               {users.map((u) => (
-                <tr key={u.id} className="hover:bg-zinc-800/20 transition-colors">
+                <tr
+                  key={u.id}
+                  className={`hover:bg-zinc-800/20 transition-colors ${u.role !== 'master_admin' ? 'cursor-pointer' : ''}`}
+                  onClick={() => { if (u.role !== 'master_admin') setSelectedUser(u); }}
+                >
                   <td className="px-6 py-4">
                     <div className="flex items-center gap-3">
                       <img src={u.avatarUrl || `https://ui-avatars.com/api/?name=${u.name || 'U'}&background=random`} alt="User Avatar" className="w-10 h-10 rounded-full bg-zinc-800" />
@@ -328,10 +445,12 @@ function App() {
                       <span className="text-xs px-2 py-1 bg-purple-500/10 text-purple-400 border border-purple-500/20 rounded-md font-mono">{u.role}</span>
                     ) : (
                       <select
-                        value={u.role || 'user'}
-                        onChange={(e) => handleUpdateUserRole(u.id, e.target.value as 'admin' | 'user')}
+                        value={u.role || 'free'}
+                        onClick={(e) => e.stopPropagation()}
+                        onChange={(e) => handleUpdateUserRole(u.id, e.target.value as 'admin' | 'user' | 'free')}
                         className="bg-zinc-950 border border-zinc-800 text-zinc-300 text-xs rounded px-2 py-1 outline-none focus:border-blue-500"
                       >
+                        <option value="free">free</option>
                         <option value="user">user</option>
                         <option value="admin">admin</option>
                       </select>
@@ -345,33 +464,80 @@ function App() {
                       {u.status || 'pending'}
                     </span>
                   </td>
-                  <td className="px-6 py-4 text-right flex items-center justify-end gap-2 h-full min-h-[73px]">
-                    {u.role !== 'master_admin' && u.status === 'pending' && (
-                      <>
-                        <button onClick={() => handleUpdateUserStatus(u.id, 'approved')} className="text-green-500 hover:text-white hover:bg-green-600 transition-colors text-xs border border-green-500/30 px-2 py-1.5 rounded-md flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5" /> Approve
+                  <td className="px-6 py-4 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-2 min-h-[33px]">
+                      {u.role !== 'master_admin' && u.status === 'pending' && (
+                        <>
+                          <button onClick={() => handleUpdateUserStatus(u.id, 'approved')} className="text-green-500 hover:text-white hover:bg-green-600 transition-colors text-xs border border-green-500/30 px-2 py-1.5 rounded-md flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" /> Approve
+                          </button>
+                          <button onClick={() => handleUpdateUserStatus(u.id, 'rejected')} className="text-red-500 hover:text-white hover:bg-red-600 transition-colors text-xs border border-red-500/30 px-2 py-1.5 rounded-md flex items-center gap-1">
+                            <X className="w-3.5 h-3.5" /> Reject
+                          </button>
+                        </>
+                      )}
+                      {u.role !== 'master_admin' && u.status === 'approved' && (
+                        <button onClick={() => handleUpdateUserStatus(u.id, 'rejected')} className="text-zinc-500 hover:text-red-400 transition-colors text-xs px-2 py-1.5 rounded-md hover:bg-zinc-800">
+                          Revoke Access
                         </button>
-                        <button onClick={() => handleUpdateUserStatus(u.id, 'rejected')} className="text-red-500 hover:text-white hover:bg-red-600 transition-colors text-xs border border-red-500/30 px-2 py-1.5 rounded-md flex items-center gap-1">
-                          <X className="w-3.5 h-3.5" /> Reject
+                      )}
+                      {u.role !== 'master_admin' && u.status === 'rejected' && (
+                        <button onClick={() => handleUpdateUserStatus(u.id, 'approved')} className="text-zinc-500 hover:text-green-400 transition-colors text-xs px-2 py-1.5 rounded-md hover:bg-zinc-800">
+                          Restore Access
                         </button>
-                      </>
-                    )}
-                    {u.role !== 'master_admin' && u.status === 'approved' && (
-                      <button onClick={() => handleUpdateUserStatus(u.id, 'rejected')} className="text-zinc-500 hover:text-red-400 transition-colors text-xs px-2 py-1.5 rounded-md hover:bg-zinc-800">
-                        Revoke Access
-                      </button>
-                    )}
-                    {u.role !== 'master_admin' && u.status === 'rejected' && (
-                      <button onClick={() => handleUpdateUserStatus(u.id, 'approved')} className="text-zinc-500 hover:text-green-400 transition-colors text-xs px-2 py-1.5 rounded-md hover:bg-zinc-800">
-                        Restore Access
-                      </button>
+                      )}
+                    </div>
+                  </td>
+                  {/* 3-dot menu column */}
+                  <td className="px-2 py-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    {u.role !== 'master_admin' && (
+                      <div className="relative inline-block">
+                        <button
+                          onClick={() => setMenuOpenId(menuOpenId === u.id ? null : u.id)}
+                          className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
+                          title="More options"
+                        >
+                          <MoreHorizontal className="w-4 h-4" />
+                        </button>
+
+                        {menuOpenId === u.id && (
+                          <>
+                            {/* Invisible backdrop to close menu on outside click */}
+                            <div className="fixed inset-0 z-40" onClick={() => setMenuOpenId(null)} />
+                            <div className="absolute right-0 top-full mt-1 z-50 w-48 bg-zinc-900 border border-zinc-700 rounded-lg shadow-xl shadow-black/40 py-1 text-left">
+                              {u.status === 'approved' && (
+                                <button
+                                  onClick={() => { handleUpdateUserStatus(u.id, 'rejected'); setMenuOpenId(null); }}
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-orange-400 transition-colors"
+                                >
+                                  <ShieldOff className="w-3.5 h-3.5" /> Revoke Access
+                                </button>
+                              )}
+                              {u.status === 'rejected' && (
+                                <button
+                                  onClick={() => { handleUpdateUserStatus(u.id, 'approved'); setMenuOpenId(null); }}
+                                  className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-300 hover:bg-zinc-800 hover:text-green-400 transition-colors"
+                                >
+                                  <Check className="w-3.5 h-3.5" /> Restore Access
+                                </button>
+                              )}
+                              <button
+                                onClick={() => { handleDeleteUser(u.id); setMenuOpenId(null); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-red-400 hover:bg-red-500/10 hover:text-red-300 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" /> Delete User
+                              </button>
+                            </div>
+                          </>
+                        )}
+                      </div>
                     )}
                   </td>
                 </tr>
               ))}
               {users.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="px-6 py-8 text-center text-zinc-500 text-sm">
+                  <td colSpan={5} className="px-6 py-8 text-center text-zinc-500 text-sm">
                     No users found in the database.
                   </td>
                 </tr>
@@ -380,6 +546,313 @@ function App() {
           </table>
         </div>
       </main>
+
+      {/* ── User Detail Modal ── */}
+      {selectedUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setSelectedUser(null)}
+        >
+          <div
+            className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl shadow-black/50 w-full max-w-lg max-h-[85vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-start justify-between p-6 pb-4 border-b border-zinc-800">
+              <div className="flex items-center gap-4">
+                <img
+                  src={selectedUser.avatarUrl || `https://ui-avatars.com/api/?name=${selectedUser.name || 'U'}&background=random&size=128`}
+                  alt="Avatar"
+                  className="w-16 h-16 rounded-full border-2 border-zinc-700"
+                />
+                <div>
+                  <h3 className="text-lg font-bold text-white">{selectedUser.name || 'Unknown'}</h3>
+                  <p className="text-sm text-zinc-400">{selectedUser.email}</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                {selectedUser.role !== 'master_admin' && (
+                  editMode ? (
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={cancelEditing}
+                        className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
+                        title="Cancel"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={handleSaveEdit}
+                        disabled={savingEdit}
+                        className="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                        title="Save changes"
+                      >
+                        {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => startEditing(selectedUser)}
+                      className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
+                      title="Edit user"
+                    >
+                      <Pencil className="w-4 h-4" />
+                    </button>
+                  )
+                )}
+                <button
+                  onClick={() => { setSelectedUser(null); cancelEditing(); }}
+                  className="text-zinc-500 hover:text-white p-1 rounded-md hover:bg-zinc-800 transition-colors"
+                >
+                  <XCircle className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div className="px-5 py-4 space-y-5">
+              {/* Status & Role */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Shield className="w-3.5 h-3.5 text-zinc-500" />
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Access</h3>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <span className="text-xs text-zinc-400">Role</span>
+                    {editMode ? (
+                      <select
+                        value={editData.role}
+                        onChange={(e) => setEditData({ ...editData, role: e.target.value })}
+                        className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-md px-2 py-1 outline-none focus:border-blue-500 transition-colors"
+                      >
+                        <option value="free">free</option>
+                        <option value="user">user</option>
+                        <option value="admin">admin</option>
+                      </select>
+                    ) : (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium border ${selectedUser.role === 'master_admin' ? 'text-purple-400 bg-purple-500/10 border-purple-500/20' :
+                        selectedUser.role === 'admin' ? 'text-blue-400 bg-blue-500/10 border-blue-500/20' :
+                          'text-zinc-300 bg-zinc-700/50 border-zinc-700'
+                        }`}>
+                        {selectedUser.role || 'user'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <span className="text-xs text-zinc-400">Status</span>
+                    {editMode ? (
+                      <select
+                        value={editData.status}
+                        onChange={(e) => setEditData({ ...editData, status: e.target.value })}
+                        className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-md px-2 py-1 outline-none focus:border-blue-500 transition-colors"
+                      >
+                        <option value="pending">pending</option>
+                        <option value="approved">approved</option>
+                        <option value="rejected">rejected</option>
+                      </select>
+                    ) : (
+                      <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium uppercase border ${selectedUser.status === 'approved' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20' :
+                        selectedUser.status === 'rejected' ? 'text-red-400 bg-red-500/10 border-red-500/20' :
+                          'text-orange-400 bg-orange-500/10 border-orange-500/20'
+                        }`}>
+                        {selectedUser.status || 'pending'}
+                      </span>
+                    )}
+                  </div>
+                  {selectedUser.authProvider && (
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                      <span className="text-xs text-zinc-400">Auth Provider</span>
+                      <span className="text-xs text-white font-medium">{selectedUser.authProvider}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Identity */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Fingerprint className="w-3.5 h-3.5 text-zinc-500" />
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Identity</h3>
+                </div>
+                <div className="space-y-2">
+                  {editMode && (
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                      <span className="text-xs text-zinc-400">Name</span>
+                      <input
+                        value={editData.name}
+                        onChange={(e) => setEditData({ ...editData, name: e.target.value })}
+                        className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-md px-2 py-1 outline-none focus:border-blue-500 transition-colors w-[220px] text-right"
+                      />
+                    </div>
+                  )}
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <span className="text-xs text-zinc-400">UID</span>
+                    <span className="text-[11px] text-zinc-300 font-mono truncate max-w-[250px]">{selectedUser.uid || selectedUser.id}</span>
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <span className="text-xs text-zinc-400">Email</span>
+                    {editMode ? (
+                      <input
+                        value={editData.email}
+                        onChange={(e) => setEditData({ ...editData, email: e.target.value })}
+                        className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-md px-2 py-1 outline-none focus:border-blue-500 transition-colors w-[220px] text-right"
+                      />
+                    ) : (
+                      <span className="text-xs text-white font-medium">{selectedUser.email}</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <span className="text-xs text-zinc-400">Company</span>
+                    {editMode ? (
+                      <input
+                        value={editData.company}
+                        onChange={(e) => setEditData({ ...editData, company: e.target.value })}
+                        placeholder="—"
+                        className="bg-zinc-950 border border-zinc-700 text-zinc-200 text-xs rounded-md px-2 py-1 outline-none focus:border-blue-500 transition-colors w-[220px] text-right placeholder:text-zinc-600"
+                      />
+                    ) : (
+                      <span className="text-xs text-white font-medium">{selectedUser.company || '—'}</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Activity */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Calendar className="w-3.5 h-3.5 text-zinc-500" />
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Activity</h3>
+                </div>
+                <div className="space-y-2">
+                  {selectedUser.createdAt && (
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                      <span className="text-xs text-zinc-400">Created</span>
+                      <span className="text-xs text-zinc-300">{formatTimestamp(selectedUser.createdAt)}</span>
+                    </div>
+                  )}
+                  {selectedUser.lastLoginAt && (
+                    <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                      <span className="text-xs text-zinc-400">Last Login</span>
+                      <span className="text-xs text-zinc-300">{formatTimestamp(selectedUser.lastLoginAt)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Connected Accounts */}
+              <div>
+                <div className="flex items-center gap-2 mb-3">
+                  <Link2 className="w-3.5 h-3.5 text-zinc-500" />
+                  <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Connected Accounts</h3>
+                </div>
+                <div className="space-y-2">
+                  {/* Google */}
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <div className="flex items-center gap-2.5">
+                      <GoogleIcon className="w-4 h-4" />
+                      <span className="text-xs text-white font-medium">Google</span>
+                    </div>
+                    {selectedUser.connectedProviders?.some((p: any) => p.provider === 'google') ? (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full font-medium">
+                        Not connected
+                      </span>
+                    )}
+                  </div>
+
+                  {/* GitHub */}
+                  <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                    <div className="flex items-center gap-2.5">
+                      <Github className="w-4 h-4 text-zinc-300" />
+                      <span className="text-xs text-white font-medium">GitHub</span>
+                    </div>
+                    {selectedUser.connectedProviders?.some((p: any) => p.provider === 'github') ? (
+                      <span className="text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full font-medium">
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-zinc-500 bg-zinc-800 border border-zinc-700 px-2 py-0.5 rounded-full font-medium">
+                        Not connected
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Extra fields (anything not already shown) */}
+              {(() => {
+                const knownKeys = new Set(['id', 'uid', 'email', 'name', 'role', 'status', 'avatarUrl', 'authProvider', 'createdAt', 'lastLoginAt', 'connectedProviders', 'company']);
+                const extraFields = Object.entries(selectedUser).filter(([key]) => !knownKeys.has(key));
+                if (extraFields.length === 0) return null;
+                return (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <Database className="w-3.5 h-3.5 text-zinc-500" />
+                      <h3 className="text-xs font-medium text-zinc-400 uppercase tracking-wider">Additional Data</h3>
+                    </div>
+                    <div className="space-y-2">
+                      {extraFields.map(([key, val]) => (
+                        <div key={key} className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
+                          <span className="text-xs text-zinc-400">{key}</span>
+                          <span className="text-xs text-zinc-300 font-mono truncate max-w-[250px]">{typeof val === 'object' ? JSON.stringify(val) : String(val ?? '—')}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Footer actions */}
+            {selectedUser.role !== 'master_admin' && (
+              <div className="p-6 pt-2 border-t border-zinc-800 flex items-center gap-2 justify-end">
+                {selectedUser.status === 'approved' && (
+                  <button
+                    onClick={() => { handleUpdateUserStatus(selectedUser.id, 'rejected'); setSelectedUser(null); }}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 transition-colors"
+                  >
+                    <ShieldOff className="w-3.5 h-3.5" /> Revoke Access
+                  </button>
+                )}
+                {selectedUser.status === 'rejected' && (
+                  <button
+                    onClick={() => { handleUpdateUserStatus(selectedUser.id, 'approved'); setSelectedUser(null); }}
+                    className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors"
+                  >
+                    <Check className="w-3.5 h-3.5" /> Restore Access
+                  </button>
+                )}
+                {selectedUser.status === 'pending' && (
+                  <>
+                    <button
+                      onClick={() => { handleUpdateUserStatus(selectedUser.id, 'approved'); setSelectedUser(null); }}
+                      className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md border border-green-500/30 text-green-400 hover:bg-green-500/10 transition-colors"
+                    >
+                      <Check className="w-3.5 h-3.5" /> Approve
+                    </button>
+                    <button
+                      onClick={() => { handleUpdateUserStatus(selectedUser.id, 'rejected'); setSelectedUser(null); }}
+                      className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md border border-red-500/30 text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <X className="w-3.5 h-3.5" /> Reject
+                    </button>
+                  </>
+                )}
+                <button
+                  onClick={() => handleDeleteUser(selectedUser.id)}
+                  className="flex items-center gap-1.5 text-xs px-3 py-2 rounded-md bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 hover:text-red-300 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Delete User
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
