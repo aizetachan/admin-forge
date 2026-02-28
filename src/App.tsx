@@ -815,34 +815,32 @@ function App() {
                       </div>
                     </div>
                     <div className="flex items-center gap-1">
-                      {selectedUser.role !== 'master_admin' && (
-                        editMode ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={cancelEditing}
-                              className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
-                              title="Cancel"
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={handleSaveEdit}
-                              disabled={savingEdit}
-                              className="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
-                              title="Save changes"
-                            >
-                              {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-                            </button>
-                          </div>
-                        ) : (
+                      {editMode ? (
+                        <div className="flex items-center gap-1">
                           <button
-                            onClick={() => startEditing(selectedUser)}
+                            onClick={cancelEditing}
                             className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
-                            title="Edit user"
+                            title="Cancel"
                           >
-                            <Pencil className="w-4 h-4" />
+                            <X className="w-4 h-4" />
                           </button>
-                        )
+                          <button
+                            onClick={handleSaveEdit}
+                            disabled={savingEdit}
+                            className="text-emerald-400 hover:text-emerald-300 p-1.5 rounded-md hover:bg-emerald-500/10 transition-colors disabled:opacity-50"
+                            title="Save changes"
+                          >
+                            {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => startEditing(selectedUser)}
+                          className="text-zinc-500 hover:text-white p-1.5 rounded-md hover:bg-zinc-800 transition-colors"
+                          title="Edit user"
+                        >
+                          <Pencil className="w-4 h-4" />
+                        </button>
                       )}
                       <button
                         onClick={() => { setSelectedUser(null); cancelEditing(); }}
@@ -864,7 +862,7 @@ function App() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
                           <span className="text-xs text-zinc-400">Role</span>
-                          {editMode ? (
+                          {editMode && selectedUser.role !== 'master_admin' ? (
                             <select
                               value={editData.role === 'free' ? 'guest' : (editData.role || 'user')}
                               onChange={(e) => setEditData({ ...editData, role: e.target.value })}
@@ -885,7 +883,7 @@ function App() {
                         </div>
                         <div className="flex items-center justify-between px-3 py-2.5 rounded-lg bg-zinc-800/50 border border-zinc-800">
                           <span className="text-xs text-zinc-400">Status</span>
-                          {editMode ? (
+                          {editMode && selectedUser.role !== 'master_admin' ? (
                             <select
                               value={editData.status}
                               onChange={(e) => setEditData({ ...editData, status: e.target.value })}
