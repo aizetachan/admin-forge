@@ -1,5 +1,18 @@
 {
   "projects": {
     "default": "forge-d45d8"
-  }
+  },
+  "targets": {
+    "forge-d45d8": {
+      "hosting": {
+        "admin": [
+          "forge-d45d8-admin"
+        ],
+        "app": [
+          "forge-d45d8"
+        ]
+      }
+    }
+  },
+  "etags": {}
 }

@@ -1,6 +1,6 @@
 {
     "hosting": {
-        "site": "forge-d45d8",
+        "target": "admin",
         "public": "dist",
         "ignore": [
             "firebase.json",

@@ -3,21 +3,64 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function isMasterAdmin() {
-      return request.auth != null && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master_admin';
+      return request.auth != null && 
+             exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+             get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'master_admin';
     }
 
     match /users/{userId} {
       // Users can read their own profile; admins can read all
-      allow read: if request.auth != null && (request.auth.uid == userId || isMasterAdmin());
+      // We also allow reading if the authenticated email matches the profile email for linking purposes
+      allow read: if request.auth != null && (request.auth.uid == userId || request.auth.token.email == resource.data.email || isMasterAdmin());
       
-      // Users can create their initial profile
+      // Users can create their initial profile (preventing role escalation could be added here)
       allow create: if request.auth != null && request.auth.uid == userId;
       
-      // Users can update their own profile; admins can update any
-      allow update: if request.auth != null && (request.auth.uid == userId || isMasterAdmin());
+      // Users can update their own profile; admins can update any.
+      // We explicitly allow updating ONLY connectedProviders and lastLoginAt if emails match (for account linking).
+      allow update: if request.auth != null && (
+        isMasterAdmin() ||
+        (request.auth.uid == userId) ||
+        (
+          request.auth.token.email == resource.data.email &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastLoginAt', 'connectedProviders'])
+        )
+      );
       
       // Only admins can delete users
       allow delete: if isMasterAdmin();
+    }
+
+    match /plans/{planId} {
+      // Plans are public so unauthenticated users can see features/limits
+      allow read: if true;
+      // Only master admin can create/update/delete plans
+      allow write: if isMasterAdmin();
+    }
+
+    match /checkout_sessions/{sessionId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /customer_portal_sessions/{sessionId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /stripe_events/{eventId} {
+      allow create: if request.auth != null && request.resource.data.userId == request.auth.uid;
+      allow read: if request.auth != null && (resource == null || resource.data.userId == request.auth.uid);
+    }
+
+    match /verify_checkout_requests/{requestId} {
+      allow create: if true;
+      allow read: if true;
+    }
+
+    match /content/{document=**} {
+      allow read: if true;
+      allow write: if isMasterAdmin();
     }
   }
 }
