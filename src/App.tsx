@@ -612,8 +612,8 @@ function App() {
                   {users.map((u) => (
                     <tr
                       key={u.id}
-                      className={`hover:bg-zinc-800/20 transition-colors ${u.role !== 'master_admin' ? 'cursor-pointer' : ''}`}
-                      onClick={() => { if (u.role !== 'master_admin') setSelectedUser(u); }}
+                      className="hover:bg-zinc-800/20 transition-colors cursor-pointer"
+                      onClick={() => setSelectedUser(u)}
                     >
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
